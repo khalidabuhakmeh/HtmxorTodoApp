@@ -1,0 +1,210 @@
+﻿@page "/"
+@using System.ComponentModel
+@using Microsoft.AspNetCore.Mvc.Rendering
+@using Microsoft.EntityFrameworkCore
+@inherits ConditionalComponentBase
+@inject Database Db
+
+<PageTitle>Home</PageTitle>
+
+<HtmxFragmentElement Id="tasks">
+    <h1 class="display-4 mb-4">Tasks</h1>
+
+    <form class="d-flex my-3" hx-post="/" hx-target="#tasks">
+        <input class="form-control me-2" name="Form.Text" type="text" placeholder="Add Task..." aria-label="New Task">
+        <button class="btn btn-outline-success" type="submit">Add</button>
+    </form>
+
+    @foreach (var group in groups)
+    {
+        <div class="container">
+            <h2 class="display-6 mb-3 text-decoration-underline">@group.Key</h2>
+            @if (group.Value.Any())
+            {
+                <table class="table table-responsive-lg">
+                    <thead class="bg-dark text-white">
+                    <tr>
+                        <th scope="col">#</th>
+                        <th scope="col">Task</th>
+                        <th scope="col">Priority</th>
+                        <th scope="col">Complete</th>
+                        <th scope="col">&nbsp;</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var item in group.Value)
+                    {
+                        @if (item.IsSelected)
+                        {
+                            <tr>
+                                <th scope="row">
+                                    @item.Id
+                                    <input type="hidden" name="Form.Id" value="@item.Id" form="save"/>
+                                </th>
+                                <td>
+                                    <input type="text" name="Form.Text" value="@item.Text" class="form-control" placeholder="enter a task..." form="save"/>
+                                </td>
+                                <td>
+                                    <select class="form-select" name="Form.Priority" form="save">
+                                        @foreach (var priority in TodoItemViewModel.Priorities)
+                                        {
+                                            <option value="@priority.Value" selected="@(priority.Value == item.Priority.ToString() ? "selected" : null)">
+                                                @priority.Text
+                                            </option>
+                                        }
+                                    </select>
+                                </td>
+                                <td>
+                                    <label class="form-check-label" asp-for="IsCompleted">
+                                        <input class="form-check-input" type="checkbox" name="Form.IsCompleted" checked="@(item.IsCompleted ? "checked" : null)" value="True" form="save"/>
+                                    </label>
+                                </td>
+                                <td>
+                                    <button type="submit"
+                                            class="btn btn-outline-primary"
+                                            form="save">
+                                        Save
+                                    </button>
+                                    <button class="btn btn-outline-danger"
+                                            hx-confirm="Are you sure?"
+                                            hx-post="/?remove=@item.Id"
+                                            hx-target="#tasks">
+                                        Remove
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                        else
+                        {
+                            <tr>
+                                <th scope="row">@item.Id</th>
+                                <td>@item.Text</td>
+                                <td>
+                                    <span class="badge bg-primary">@item.Priority</span>
+                                </td>
+                                <td>@item.CompletedDisplayText</td>
+                                <td>
+                                    <button
+                                        hx-get="/?edit=@item.Id"
+                                        hx-target="#tasks"
+                                        class="btn btn-outline-info">
+                                        Edit
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <div class="alert alert-info">
+                    There are currently no @group.Key tasks
+                </div>
+            }
+        </div>
+    }
+
+    <form method="post"
+          hx-post="/"
+          hx-target="#tasks"
+          id="save">
+    </form>
+</HtmxFragmentElement>
+
+
+@code {
+
+    [SupplyParameterFromQuery(Name = "edit")]
+    public int? Editing { get; set; }
+
+    [SupplyParameterFromQuery(Name = "remove")]
+    public int? Removing { get; set; }
+
+    [SupplyParameterFromForm] public TodoItemSaveModel? Form { get; set; }
+
+    Dictionary<string, IEnumerable<TodoItemViewModel>> groups = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Form is { })
+        {
+            await SaveTodoItem(Form);
+            Form = null;
+        }
+
+        if (Removing is { } id and > 0)
+        {
+            await RemoveItem(id);
+        }
+
+        var all = await Db.Items
+            .AsNoTracking()
+            .ToListAsync();
+
+        groups = new()
+        {
+            {
+                "Pending", all
+                    .Where(i => !i.IsCompleted)
+                    .OrderByDescending(i => i.Id)
+                    .Select(i => new TodoItemViewModel(i, i.Id == Editing))
+            },
+            {
+                "Completed", all
+                    .Where(i => i.IsCompleted)
+                    .OrderByDescending(i => i.Completed)
+                    .Select(i => new TodoItemViewModel(i, i.Id == Editing))
+            }
+        };
+    }
+
+    private async Task SaveTodoItem(TodoItemSaveModel form)
+    {
+        var item = form.Id.HasValue
+            ? await Db.Items.FindAsync(form.Id.Value)
+            : (await Db.AddAsync(new TodoItem())).Entity;
+
+        if (item is not null)
+        {
+            item.Completed = form.IsCompleted ? DateTime.UtcNow : null;
+            item.Text = form.Text;
+            item.Priority = form.Priority;
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task RemoveItem(int id)
+    {
+        var item = await Db.Items.FindAsync(id);
+        if (item is not null)
+        {
+            Db.Items.Remove(item);
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    public class TodoItemViewModel(TodoItem item, bool isSelected)
+    {
+        public int Id => item.Id;
+        public string Text => item.Text;
+        public DateTime? Completed => item.Completed;
+        public TodoItemPriority Priority => item.Priority;
+        [DisplayName("Complete?")] public bool IsCompleted => item.IsCompleted;
+        public bool IsSelected => isSelected;
+
+        public string CompletedDisplayText => item.Completed.HasValue
+            ? item.Completed.Value.ToString("yyyy MMMM dd")
+            : "pending";
+
+        public static IEnumerable<SelectListItem> Priorities { get; } =
+            new[] { TodoItemPriority.High, TodoItemPriority.Medium, TodoItemPriority.Low }
+                .Select(i => new SelectListItem(i.ToString(), i.ToString()))
+                .ToList();
+    }
+
+    public record TodoItemSaveModel(int? Id, string Text, bool IsCompleted, TodoItemPriority Priority);
+
+}
