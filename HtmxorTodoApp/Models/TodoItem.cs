@@ -6,11 +6,17 @@ namespace HtmxorTodoApp.Models;
 public class TodoItem
 {
     public int Id { get; set; }
-    [Required] public string Text { get; set; } = "";
+    
+    [Required] 
+    public string Text { get; set; } = "";
+    
     public DateTime? Completed { get; set; }
+
     [Required]
     public TodoItemPriority Priority { get; set; } = TodoItemPriority.Medium;
-    [NotMapped] public bool IsCompleted => Completed.HasValue;
+    
+    [NotMapped] 
+    public bool IsCompleted => Completed.HasValue;
 }
 
 public enum TodoItemPriority
